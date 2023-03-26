@@ -9,7 +9,6 @@
 # for BPF programs and makes inline assembly aware of the BPF registers.
 CFLAGS +=  \
 	-Wall \
-	-Werror \
 	-fno-stack-protector \
 	-O2 \
 	-target bpf \
@@ -43,8 +42,8 @@ CFLAGS +=  \
 TRIPLET := $(shell gcc -dumpmachine)
 CFLAGS += -I/usr/include/$(TRIPLET)
 
-CC := clang-12
-LD := llc-12
+CC := clang-13
+LD := llc-13
 
 UT_C_FILES:=$(shell find ut -name '*.c')
 UT_OBJS:=$(UT_C_FILES:.c=.o) $(shell ./list-ut-objs)

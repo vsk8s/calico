@@ -1,0 +1,10 @@
+.debhelper
+debhelper-build-stamp
+files
+*.substvars
+*.log
+calico-typha-server
+calico-typha-client
+calico-ctl
+calico-node
+calico-cni-plugin

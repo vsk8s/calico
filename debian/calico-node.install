@@ -1,0 +1,4 @@
+_build/bin/calico-node /usr/bin/
+_build/bin/calico-felix /usr/bin/
+_build/bin/calico-ipam /usr/bin/
+_build/bin/calico-bpf /usr/bin/
