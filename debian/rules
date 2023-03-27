@@ -21,7 +21,7 @@ GO_LDFLAGS += -X github.com/projectcalico/calico/node/buildinfo.GitRevision=$(gi
 DH_GOLANG_EXCLUDES += felix/k8sfv
 DH_GOLANG_EXCLUDES += cni-plugin/win_tests
 
-export CGO_CFLAGS            := $(CFLAGS) -I$(PWD)/felix/bpf-gpl/include/libbpf/src -I$(PWD)/felix/bpf-gpl -I$(PWD)/felix/bpf-gpl/include/libbpf/src
+export CGO_CFLAGS            := $(CFLAGS) -I$(PWD)/felix/bpf-gpl/include/libbpf/src -I$(PWD)/felix/bpf-gpl
 export CGO_CPPFLAGS          := $(CPPFLAGS)
 export CGO_LDFLAGS          := $(LDFLAGS) -lbpf
 export GO111MODULE=on

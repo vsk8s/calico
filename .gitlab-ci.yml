@@ -22,7 +22,10 @@ build:
     - ln -s /usr/lib/go-1.19/bin/go /usr/bin/go
     - ln -s /usr/lib/go-1.19/bin/gofmt /usr/bin/gofmt
   script:
-    - gbp buildpackage --git-ignore-branch -b -us -uc
+#    - cd felix/bpf-gpl
+#    - make -j $(shell nproc)
+#    - cd ../../
+    - dpkg-buildpackage -b -us -uc
     - mv ../*.deb . # GitLab can't copy from the parent directory...
   artifacts:
     name: packets
