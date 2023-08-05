@@ -17,7 +17,6 @@ package bpf
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -325,7 +324,7 @@ func (b *PinnedMap) Iter(f IterCallback) error {
 		if action == IterDelete {
 			// The previous iteration asked us to delete its key; do that now before we check for the end of
 			// the iteration.
-			err := DeleteMapEntry(b.MapFD(), keyToDelete, b.ValueSize)
+			err := DeleteMapEntry(b.MapFD(), keyToDelete, valueSize)
 			if err != nil && !IsNotExists(err) {
 				return fmt.Errorf("failed to delete map entry: %w", err)
 			}
@@ -709,7 +708,7 @@ func (b *PinnedMap) CopyDeltaFromOldMap() error {
 func (b *PinnedMap) getOldMapVersion() (int, error) {
 	oldVersion := 0
 	dir, name := filepath.Split(b.Filename)
-	files, err := ioutil.ReadDir(dir)
+	files, err := os.ReadDir(dir)
 	if err != nil {
 		return 0, fmt.Errorf("error reading pin path %w", err)
 	}

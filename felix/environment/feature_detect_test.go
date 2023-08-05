@@ -24,11 +24,19 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
+
+	"github.com/projectcalico/calico/felix/netlinkshim/mocknetlink"
 
 	. "github.com/projectcalico/calico/felix/environment"
 	"github.com/projectcalico/calico/felix/iptables/cmdshim"
 	"github.com/projectcalico/calico/felix/iptables/testutils"
 )
+
+func init() {
+	log.SetLevel(log.DebugLevel)
+}
 
 func TestFeatureDetection(t *testing.T) {
 	RegisterTestingT(t)
@@ -110,6 +118,17 @@ func TestFeatureDetection(t *testing.T) {
 		},
 		{
 			"iptables v1.6.2",
+			"Linux version 4.20.0", // Triggers test harness to support KernelSideRouteFiltering
+			Features{
+				RestoreSupportsLock:      true,
+				SNATFullyRandom:          true,
+				MASQFullyRandom:          true,
+				ChecksumOffloadBroken:    true,
+				KernelSideRouteFiltering: true,
+			},
+		},
+		{
+			"iptables v1.6.2",
 			"error",
 			Features{
 				RestoreSupportsLock:   true,
@@ -133,7 +152,12 @@ func TestFeatureDetection(t *testing.T) {
 		t.Run("iptables version "+tst.iptablesVersion+" kernel "+tst.kernelVersion, func(t *testing.T) {
 			RegisterTestingT(t)
 			dataplane := testutils.NewMockDataplane("filter", map[string][]string{}, "legacy")
-			featureDetector := NewFeatureDetector(nil)
+			mockNL := mocknetlink.New()
+			if !strings.Contains(tst.kernelVersion, "4.20.0") {
+				mockNL.FailuresToSimulate = mocknetlink.FailNextSetStrict
+				mockNL.SetStrictCheckErr = unix.ENOPROTOOPT
+			}
+			featureDetector := NewFeatureDetector(nil, WithNetlinkOverride(mockNL.NewMockNetlink))
 			featureDetector.NewCmd = dataplane.NewCmd
 			featureDetector.GetKernelVersionReader = dataplane.GetKernelVersionReader
 
@@ -149,7 +173,8 @@ func TestFeatureDetection(t *testing.T) {
 				dataplane.KernelVersion = tst.kernelVersion
 			}
 
-			Expect(featureDetector.GetFeatures()).To(Equal(&tst.features))
+			features := featureDetector.GetFeatures()
+			Expect(features).To(Equal(&tst.features))
 		})
 	}
 }
@@ -207,7 +232,12 @@ func TestFeatureDetectionOverride(t *testing.T) {
 		t.Run("iptables version "+tst.iptablesVersion+" kernel "+tst.kernelVersion, func(t *testing.T) {
 			RegisterTestingT(t)
 			dataplane := testutils.NewMockDataplane("filter", map[string][]string{}, "legacy")
-			featureDetector := NewFeatureDetector(tst.override)
+			mockNL := mocknetlink.New()
+			if !strings.Contains(tst.kernelVersion, "4.20.0") {
+				mockNL.FailuresToSimulate = mocknetlink.FailNextSetStrict
+				mockNL.SetStrictCheckErr = unix.ENOPROTOOPT
+			}
+			featureDetector := NewFeatureDetector(tst.override, WithNetlinkOverride(mockNL.NewMockNetlink))
 			featureDetector.NewCmd = dataplane.NewCmd
 			featureDetector.GetKernelVersionReader = dataplane.GetKernelVersionReader
 
@@ -527,13 +557,20 @@ func TestBPFFeatureDetection(t *testing.T) {
 	} {
 		t.Run("kernel "+tst.kernelVersion, func(t *testing.T) {
 			RegisterTestingT(t)
-			featureDetector := NewFeatureDetector(nil)
+			dataplane := testutils.NewMockDataplane("filter", map[string][]string{}, "legacy")
+			dataplane.Version = "iptables v1.4.4"
+			mockNL := mocknetlink.New()
+			mockNL.FailuresToSimulate = mocknetlink.FailNextSetStrict
+			mockNL.SetStrictCheckErr = unix.ENOPROTOOPT
+			nlOpt := WithNetlinkOverride(mockNL.NewMockNetlink)
+			featureDetector := NewFeatureDetector(nil, nlOpt)
 			if tst.override != nil {
-				featureDetector = NewFeatureDetector(tst.override)
+				featureDetector = NewFeatureDetector(tst.override, nlOpt)
 			}
 			kernel := mockKernelVersion{
 				kernelVersion: tst.kernelVersion,
 			}
+			featureDetector.NewCmd = dataplane.NewCmd
 			featureDetector.GetKernelVersionReader = kernel.GetKernelVersionReader
 			Expect(featureDetector.GetFeatures()).To(Equal(&tst.features))
 		})

@@ -24,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -282,6 +281,7 @@ func newBPFEndpointManager(
 	iptablesFilterTable iptablesTable,
 	livenessCallback func(),
 	opReporter logutils.OpRecorder,
+	featureDetector environment.FeatureDetectorIface,
 ) (*bpfEndpointManager, error) {
 	if livenessCallback == nil {
 		livenessCallback = func() {}
@@ -385,8 +385,9 @@ func newBPFEndpointManager(
 			nil, // deviceRouteSourceAddress
 			config.DeviceRouteProtocol,
 			true, // removeExternalRoutes
-			254,
+			unix.RT_TABLE_MAIN,
 			opReporter,
+			featureDetector,
 		)
 		m.services = make(map[serviceKey][]ip.V4CIDR)
 		m.dirtyServices = set.New[serviceKey]()
@@ -2008,7 +2009,7 @@ func (m *bpfEndpointManager) writePolicyDebugInfo(insns asm.Insns, ifaceName str
 		return err
 	}
 
-	if err := ioutil.WriteFile(filename, buffer.Bytes(), 0600); err != nil {
+	if err := os.WriteFile(filename, buffer.Bytes(), 0600); err != nil {
 		return err
 	}
 	return nil

@@ -16,9 +16,9 @@ package environment
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os/exec"
 	"reflect"
 	"regexp"
@@ -27,6 +27,9 @@ import (
 	"sync"
 
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
+
+	"github.com/projectcalico/calico/felix/netlinkshim"
 
 	"github.com/projectcalico/calico/felix/iptables/cmdshim"
 )
@@ -68,6 +71,14 @@ type Features struct {
 	ChecksumOffloadBroken bool
 	// IPIPDeviceIsL3 represent if ipip tunnels acts like other l3 devices
 	IPIPDeviceIsL3 bool
+	// KernelSideRouteFiltering is true if the kernel supports filtering netlink route dumps kernel-side.
+	// This is much more efficient.
+	KernelSideRouteFiltering bool
+}
+
+type FeatureDetectorIface interface {
+	GetFeatures() *Features
+	RefreshFeatures()
 }
 
 type FeatureDetector struct {
@@ -80,14 +91,30 @@ type FeatureDetector struct {
 	GetKernelVersionReader func() (io.Reader, error)
 	// Factory for making commands, used by iptables UTs to shim exec.Command().
 	NewCmd cmdshim.CmdFactory
+
+	newNetlinkHandle            func() (netlinkshim.Interface, error)
+	cachedNetlinkSupportsStrict *bool
 }
 
-func NewFeatureDetector(overrides map[string]string) *FeatureDetector {
-	return &FeatureDetector{
+type Option func(detector *FeatureDetector)
+
+func WithNetlinkOverride(f func() (netlinkshim.Interface, error)) Option {
+	return func(detector *FeatureDetector) {
+		detector.newNetlinkHandle = f
+	}
+}
+
+func NewFeatureDetector(overrides map[string]string, opts ...Option) *FeatureDetector {
+	fd := &FeatureDetector{
 		GetKernelVersionReader: GetKernelVersionReader,
 		NewCmd:                 cmdshim.NewRealCmd,
 		featureOverride:        overrides,
+		newNetlinkHandle:       netlinkshim.NewRealNetlink,
 	}
+	for _, opt := range opts {
+		opt(fd)
+	}
+	return fd
 }
 
 func (d *FeatureDetector) GetFeatures() *Features {
@@ -115,13 +142,19 @@ func (d *FeatureDetector) refreshFeaturesLockHeld() {
 	iptV := d.getIptablesVersion()
 	kerV := d.getKernelVersion()
 
+	netlinkSupportsStrict, err := d.netlinkSupportsStrict()
+	if err != nil {
+		log.WithError(err).Panic("Failed to do netlink feature detection.")
+	}
+
 	// Calculate the features.
 	features := Features{
-		SNATFullyRandom:       iptV.Compare(v1Dot6Dot0) >= 0 && kerV.Compare(v3Dot14Dot0) >= 0,
-		MASQFullyRandom:       iptV.Compare(v1Dot6Dot2) >= 0 && kerV.Compare(v3Dot14Dot0) >= 0,
-		RestoreSupportsLock:   iptV.Compare(v1Dot6Dot2) >= 0,
-		ChecksumOffloadBroken: true, // Was supposed to be fixed in v5.7 but still seems to be broken.
-		IPIPDeviceIsL3:        d.ipipDeviceIsL3(),
+		SNATFullyRandom:          iptV.Compare(v1Dot6Dot0) >= 0 && kerV.Compare(v3Dot14Dot0) >= 0,
+		MASQFullyRandom:          iptV.Compare(v1Dot6Dot2) >= 0 && kerV.Compare(v3Dot14Dot0) >= 0,
+		RestoreSupportsLock:      iptV.Compare(v1Dot6Dot2) >= 0,
+		ChecksumOffloadBroken:    true, // Was supposed to be fixed in v5.7 but still seems to be broken.
+		IPIPDeviceIsL3:           d.ipipDeviceIsL3(),
+		KernelSideRouteFiltering: netlinkSupportsStrict,
 	}
 
 	for k, v := range d.featureOverride {
@@ -209,7 +242,7 @@ func (d *FeatureDetector) getDistributionName() string {
 		return DefaultDistro
 	}
 
-	kernVersion, err := ioutil.ReadAll(versionReader)
+	kernVersion, err := io.ReadAll(versionReader)
 	if err != nil {
 		log.WithError(err).Warn("Failed to read kernel version from reader")
 		return DefaultDistro
@@ -269,6 +302,33 @@ func (d *FeatureDetector) getKernelVersion() *Version {
 		return v3Dot10Dot0
 	}
 	return kernVersion
+}
+
+func (d *FeatureDetector) netlinkSupportsStrict() (bool, error) {
+	if d.cachedNetlinkSupportsStrict != nil {
+		return *d.cachedNetlinkSupportsStrict, nil
+	}
+	h, err := d.newNetlinkHandle()
+	if err != nil {
+		return false, fmt.Errorf("failed to open netlink handle to check supported features: %w", err)
+	}
+	defer h.Delete()
+	err = h.SetStrictCheck(true)
+	if err == nil {
+		log.Debug("Kernel support strict netlink mode")
+		result := true
+		d.cachedNetlinkSupportsStrict = &result
+		return result, nil
+	} else if errors.Is(err, unix.ENOPROTOOPT) {
+		// Expected on older kernels with no support.
+		log.Debug("Kernel does not support strict netlink mode")
+		result := false
+		d.cachedNetlinkSupportsStrict = &result
+		return result, nil
+	}
+	log.WithError(err).Warn("Kernel returned unexpected error when trying to detect if " +
+		"netlink supports strict mode.  Assuming no support (this may result in higher CPU usage).")
+	return false, nil
 }
 
 func countRulesInIptableOutput(in []byte) int {
@@ -357,3 +417,18 @@ func FindBestBinary(lookPath func(file string) (string, error), ipVersion uint8,
 	logCxt.Panic("Failed to find iptables command")
 	return ""
 }
+
+type FakeFeatureDetector struct {
+	Features
+}
+
+func (f *FakeFeatureDetector) RefreshFeatures() {
+}
+
+func (f *FakeFeatureDetector) GetFeatures() *Features {
+	cp := f.Features
+	return &cp
+}
+
+var _ FeatureDetectorIface = (*FakeFeatureDetector)(nil)
+var _ FeatureDetectorIface = (*FeatureDetector)(nil)

@@ -7,7 +7,7 @@ execution_time_limit:
 agent:
   machine:
     type: e1-standard-2
-    os_image: ubuntu1804
+    os_image: ubuntu2004
 
 auto_cancel:
   running:
@@ -148,7 +148,7 @@ blocks:
     - name: "Build image"
       matrix:
       - env_var: ARCH
-        values: [ "arm64", "ppc64le" ]
+        values: [ "arm64", "ppc64le", "s390x" ]
       commands:
       - ../.semaphore/run-and-monitor image-$ARCH.log make image ARCH=$ARCH
 
@@ -625,6 +625,19 @@ blocks:
       commands:
       - ../.semaphore/run-and-monitor ci.log make ci
 
+- name: 'crypto'
+  run:
+    when: "false or change_in(['/lib.Makefile', '/crypto/'])"
+  dependencies: ["Prerequisites"]
+  task:
+    prologue:
+      commands:
+        - cd crypto
+    jobs:
+      - name: "crypto tests"
+        commands:
+          - ../.semaphore/run-and-monitor ci.log make ci
+
 - name: 'networking-calico'
   run:
     when: "${FORCE_RUN} or change_in(['/networking-calico/'])"
@@ -660,20 +673,6 @@ blocks:
           - mkdir logs
           - sudo journalctl > logs/journalctl.txt
           - artifact push job --expire-in 1d logs
-
-- name: "Documentation"
-  run:
-    when: "${FORCE_RUN} or change_in(['/*', '/calico/'], {exclude: ['/**/.gitignore', '/**/README.md', '/**/LICENSE']})"
-  dependencies: ["Prerequisites"]
-  task:
-    prologue:
-      commands:
-      - cd calico
-    jobs:
-    - name: "htmlproofer, kubeval"
-      commands:
-      - ../.semaphore/run-and-monitor htmlproofer.log make htmlproofer
-      - ../.semaphore/run-and-monitor kubeval.log make kubeval
 
 after_pipeline:
   task:
